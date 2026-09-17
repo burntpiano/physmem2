@@ -37,6 +37,9 @@
 static int pagemap_fd; static size_t PS;
 static pthread_mutex_t lk = PTHREAD_MUTEX_INITIALIZER;
 static long total_err = 0;
+/* A thread that could not get its memory tested nothing. Counting that separately
+ * is what keeps "no errors" from meaning "nothing ran" -- see the exit status below. */
+static long failed_threads = 0;
 
 static uint64_t v2p(void *v){
     uint64_t val; off_t off = ((uintptr_t)v / PS) * 8;
@@ -58,14 +61,19 @@ static void *worker(void *a){
     arg_t *A=a; size_t n=A->bytes/8;
     uint64_t *b = mmap(NULL, A->bytes, PROT_READ|PROT_WRITE,
                        MAP_PRIVATE|MAP_ANONYMOUS|MAP_LOCKED|MAP_POPULATE, -1, 0);
-    if (b==MAP_FAILED){ fprintf(stderr,"t%d mmap failed\n",A->id); return NULL; }
+    if (b==MAP_FAILED){
+      fprintf(stderr,"t%d mmap failed: could not lock %zu bytes\n",A->id,A->bytes);
+      pthread_mutex_lock(&lk); failed_threads++; pthread_mutex_unlock(&lk);
+      return NULL;
+    }
     uint64_t pats[]={0xAAAAAAAAAAAAAAAAULL,0x5555555555555555ULL,0xFFFFFFFFFFFFFFFFULL,
                      0x0ULL,0x0F0F0F0F0F0F0F0FULL,0xCCCCCCCCCCCCCCCCULL};
     uint64_t rs = 88172645463325252ULL + A->id*2654435761ULL;
     for(int pass=0; pass<A->passes; pass++){
       for(int k=0;k<6;k++){
         uint64_t p=pats[k], inv=~p;
-        for(size_t i=0;i<n;i++) b[i]=p;            BARRIER();
+        for(size_t i=0;i<n;i++) b[i]=p;
+        BARRIER();
         for(size_t i=0;i<n;i++) if(b[i]!=p) report(A->id,&b[i],b[i],p,"fill");
         BARRIER();
         for(size_t i=0;i<n;i++){ if(b[i]!=p) report(A->id,&b[i],b[i],p,"minv-up"); b[i]=inv; }
@@ -87,11 +95,19 @@ static void *worker(void *a){
 int main(int argc,char**argv){
     int nt=argc>1?atoi(argv[1]):24; size_t mb=argc>2?atol(argv[2]):1024; int ps=argc>3?atoi(argv[3]):3;
     PS=sysconf(_SC_PAGESIZE);
-    if((pagemap_fd=open("/proc/self/pagemap",O_RDONLY))<0){perror("pagemap");return 1;}
+    if((pagemap_fd=open("/proc/self/pagemap",O_RDONLY))<0){perror("pagemap");return 2;}
     printf("threads=%d bytes/thread=%zuMB passes=%d total=%zuGB\n",nt,mb,ps,(size_t)nt*mb/1024);
     fflush(stdout);
     pthread_t *th=calloc(nt,sizeof(*th)); arg_t *ar=calloc(nt,sizeof(*ar));
     for(int i=0;i<nt;i++){ar[i]=(arg_t){i,mb*1024*1024,ps};pthread_create(&th[i],NULL,worker,&ar[i]);}
     for(int i=0;i<nt;i++) pthread_join(th[i],NULL);
-    printf("TOTAL ERRORS: %ld\n",total_err); return 0;
+    printf("TOTAL ERRORS: %ld\n",total_err);
+    fflush(stdout);
+    if(failed_threads){
+      /* Incomplete beats clean: some memory was never tested, so 0 errors is not a verdict. */
+      fprintf(stderr,"INCOMPLETE: %ld of %d thread(s) could not allocate; "
+                     "the memory they would have tested was not tested\n",failed_threads,nt);
+      return 2;
+    }
+    return total_err ? 1 : 0;
 }

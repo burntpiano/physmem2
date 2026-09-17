@@ -77,6 +77,21 @@ TOTAL ERRORS: 7
 `phase` names which step caught it, `xor` isolates the flipped bits and `nbits`
 counts them. Only the first 300 error lines print; the total counts them all.
 
+## Exit status
+
+| Code | Meaning |
+|---|---|
+| 0 | Every thread ran and no error was observed. |
+| 1 | Errors were observed. The count is on the last stdout line. |
+| 2 | The test could not be completed, so the result is not a verdict. Either `/proc/self/pagemap` would not open, or a thread could not lock its memory; in the latter case an `INCOMPLETE:` line on stderr says how many. |
+
+Code 2 exists so that a clean-looking run cannot be mistaken for a passing one.
+A thread whose `mmap` failed tested nothing, and `TOTAL ERRORS: 0` would
+otherwise read as a pass over memory that was never touched.
+
+This differs from the version used in the diagnosis that prompted the tool,
+which always exited 0. The test itself is unchanged.
+
 A single bit failing repeatedly at a fixed physical address, across patterns and
 phases, is the signature of a defective cell. Bursty multi-bit errors scattered
 over many addresses point at the controller, timing or a slot instead.

@@ -23,7 +23,8 @@ into a general-purpose suite.
   repeatable physical addresses for failing words under heavy multi-threaded
   load, in a file short enough to read before trusting it.
 
-It is deliberately 74 lines of C with no dependencies beyond glibc and pthreads.
+It is deliberately short -- about 90 lines of C -- with no dependencies beyond
+glibc and pthreads.
 
 ## Build
 
@@ -53,7 +54,7 @@ physmem2 24 1200 6     # 28 GB across 24 threads, 6 passes
   Unprivileged, the physical address column reads `0x000000000000` and results
   cannot be tied to a location.
 - `MAP_LOCKED` needs privilege or a raised `RLIMIT_MEMLOCK`; otherwise the
-  worker reports `mmap failed` and exits.
+  worker reports `mmap failed`, tests nothing, and the run exits 2.
 
 ## What each pass does
 
@@ -77,6 +78,10 @@ TOTAL ERRORS: 7
 `phase` names which step caught it, `xor` isolates the flipped bits and `nbits`
 counts them. Only the first 300 error lines print; the total counts them all.
 
+A single bit failing repeatedly at a fixed physical address, across patterns and
+phases, is the signature of a defective cell. Bursty multi-bit errors scattered
+over many addresses point at the controller, timing or a slot instead.
+
 ## Exit status
 
 | Code | Meaning |
@@ -91,10 +96,6 @@ otherwise read as a pass over memory that was never touched.
 
 This differs from the version used in the diagnosis that prompted the tool,
 which always exited 0. The test itself is unchanged.
-
-A single bit failing repeatedly at a fixed physical address, across patterns and
-phases, is the signature of a defective cell. Bursty multi-bit errors scattered
-over many addresses point at the controller, timing or a slot instead.
 
 ## Two things worth knowing
 

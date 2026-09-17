@@ -1,0 +1,6 @@
+physmem2
+*.o
+*.log
+run*.log
+sweep*.log
+badpfns.txt

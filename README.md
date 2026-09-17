@@ -63,8 +63,10 @@ Per pass, for each of six patterns (`AA`, `55`, `FF`, `00`, `0F0F`, `CCCC`):
 1. fill, then verify;
 2. march up, verifying and writing the inverse;
 3. march down, verifying the inverse and restoring;
-4. a random-access sweep over a quarter of the words, to defeat the prefetcher
-   and spread row activations;
+4. a random-access sweep of `n/4` indices, to defeat the prefetcher and spread
+   row activations. The draws are with replacement, so it touches roughly 22% of
+   the words, some more than once: this pass exists for activation pressure, not
+   coverage. The three sequential passes are what touch every word.
 5. a final verify.
 
 ## Output
@@ -114,8 +116,13 @@ which always exited 0. The test itself is unchanged.
 
 ## Limitations
 
-- Not a substitute for a full march test suite: no address-decode or
-  data-retention coverage.
+- **No retention testing.** Nothing ever waits, so a weak cell that leaks over
+  seconds or minutes is not caught. That test wants a quiet machine and a long
+  pause between write and verify, which is the opposite of this tool's
+  sustained-bandwidth design; memtest86+'s bit-fade test is the right instrument
+  for it.
+- Not a substitute for a full march test suite: there is no address-decode
+  coverage.
 - It reports what the CPU read back. On an ECC system a corrected error may
   never surface here; read the EDAC counters alongside it.
 - It only tests memory the kernel hands it, so reserved regions and memory in

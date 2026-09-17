@@ -56,6 +56,46 @@ physmem2 24 1200 6     # 28 GB across 24 threads, 6 passes
 - `MAP_LOCKED` needs privilege or a raised `RLIMIT_MEMLOCK`; otherwise the
   worker reports `mmap failed`, tests nothing, and the run exits 2.
 
+## Running it so the result means something
+
+**Use a large working set.** This is the one that decides whether the test works
+at all. A run that fits in cache never reaches DRAM: on the machine this was
+written for, a 6 MB working set ran for 13 minutes and found nothing, while a
+28 GB working set found 7 errors in under 5 minutes. Size it to most of
+installed RAM, leaving the OS room to breathe.
+
+**Pick threads to match the machine.** Roughly one per logical CPU is a
+reasonable start. The point is to keep every memory channel busy at once.
+
+**Budget the time.** 28 GB across 24 threads at 6 passes took about 5 minutes on
+a 16-core desktop part. Cost scales roughly with total bytes times passes.
+
+**Expect the machine to be unresponsive.** Every page is locked resident, so
+most of RAM is unavailable to anything else for the duration. Run it on an idle
+box, not a production one.
+
+**Repeat before concluding anything.** Marginal faults are probabilistic: the
+errors above were 7 across 6 passes, not 7 per pass. A single clean run is not a
+pass, and `exit 0` means only that nothing failed under this load in this time.
+Absence of errors here is not evidence that the memory is sound.
+
+**Non-root, if you must:** raise the lock limit (`ulimit -l unlimited`), and
+accept that the physical address column will read as zeros.
+
+## Isolating a module
+
+A failing physical address names a location, not a part. To get from one to the
+other:
+
+1. Test one module at a time, in the same slot, so a failure follows the module
+   rather than the socket.
+2. Move a suspect module to a different slot and re-test. A fault that stays
+   with the module is the module; one that stays with the slot is the board.
+3. Compare **bit positions**, not addresses, between configurations. The map
+   from physical address to a DRAM row and column depends on channel and rank
+   interleaving, so changing which slots are populated changes the addresses
+   while the failing bit lane stays put.
+
 ## What each pass does
 
 Per pass, for each of six patterns (`AA`, `55`, `FF`, `00`, `0F0F`, `CCCC`):

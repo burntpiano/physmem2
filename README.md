@@ -23,8 +23,8 @@ into a general-purpose suite.
   repeatable physical addresses for failing words under heavy multi-threaded
   load, in a file short enough to read before trusting it.
 
-It is deliberately short -- about 90 lines of C -- with no dependencies beyond
-glibc and pthreads.
+It is deliberately short -- about 200 lines of C, a quarter of them comments --
+with no dependencies beyond glibc and pthreads.
 
 ## Build
 
@@ -37,8 +37,11 @@ Linux only: it uses `/proc/self/pagemap`, `MAP_LOCKED` and `MAP_POPULATE`.
 ## Run
 
 ```sh
-physmem2 [threads] [MB_per_thread] [passes]
+physmem2 [-r RULE] [-l LAYOUT] [threads] [MB_per_thread] [passes]
 ```
+
+`-r` and `-l` only change what an error line says, not what is tested; see
+[Naming the chip](#naming-the-chip-rank-rules-and-layout-files).
 
 Defaults are 24 threads, 1024 MB per thread, 3 passes. The total footprint is
 `threads × MB_per_thread`, all of it locked resident, so keep it comfortably
@@ -95,10 +98,8 @@ other:
    from physical address to a DRAM row and column depends on channel and rank
    interleaving, so changing which slots are populated changes the addresses
    while the failing bit lane stays put. The `LANE` summary is that comparison.
-4. To tell the two ranks apart, the address has to be decoded, which this
-   program does not do. The simplest bench setup is one module, single channel,
-   with rank interleaving turned off in firmware where it is offered: rank 0
-   then occupies the lower part of the module's range and rank 1 the upper.
+4. To tell the two ranks apart, and name the part, give the program a rank
+   rule and a layout file: see the next section.
 
 ## What each pass does
 
@@ -119,6 +120,7 @@ Per pass, for each of six patterns (`AA`, `55`, `FF`, `00`, `0F0F`, `CCCC`):
 threads=24 bytes/thread=1200MB passes=6 total=28GB
 ERR t=17 phase=minv-dn paddr=0x000c14794e78 exp=0xaaaaaaaaaaaaaaaa got=0xaaaaaabaaaaaaaaa xor=0x0000001000000000 nbits=1 lane=4 dq=36
 LANE 4 (DQ32-39): 7 bit flips: DQ36=7
+PADDR bits set in every error: 0x000c14794e78  clear in every error: 0x0003eb86b187  (7 errors with a known address)
 TOTAL ERRORS: 7
 ```
 
@@ -142,13 +144,71 @@ A single bit failing repeatedly at a fixed physical address, across patterns and
 phases, is the signature of a defective cell. Bursty multi-bit errors scattered
 over many addresses point at the controller, timing or a slot instead.
 
+The `PADDR` line, printed whenever an error had a readable address, gives the
+address bits that were set in every error and the ones clear in every error.
+It is the input to calibrating a rank rule, below.
+
+## Naming the chip: rank rules and layout files
+
+A lane is a chip position. On a dual-rank module the same lane has a chip in
+each rank, and which rank an access hit is decided by the memory controller
+from the physical address, by a mapping this program cannot read. So the
+mapping is supplied with `-r`, and the part names with `-l`:
+
+```sh
+physmem2 -r above:0x480000000 -l mymodule.layout 16 1000 6
+```
+
+```
+ERR t=03 phase=minv-dn paddr=0x0004c1a2e078 ... lane=4 dq=36 rank=1 ic=U14
+LANE 4 RANK 1 (DQ32-39) IC U14: 7 bit flips: DQ36=7
+```
+
+**Rank rules (`-r`).** At most four ranks.
+
+| Rule | Rank is | Use when |
+|---|---|---|
+| `single` | always 0 | single-rank modules, to use a layout file |
+| `above:A[,B,C]` | how many of the ascending boundaries the address is at or above | rank interleaving is off, so each rank is a contiguous block |
+| `mask:M[,N]` | bit *i* is the parity of `paddr & mask i` | the rank is one address bit, or the XOR of several (the usual controller hash) |
+
+When a rule is given but an address could not be read (not running as root),
+the rank prints as `?` rather than a guess.
+
+**Finding the rule for a bench.** The rule belongs to one board, CPU, firmware
+and population; it has to be found once per test station, and again if any of
+those change.
+
+- *Easiest:* one module, one channel, rank interleaving turned off in firmware
+  where it is offered. Rank 0 then fills the lower part of that module's range
+  and rank 1 the upper, and the boundary is where the second half starts (mind
+  the hole below 4 GB, where the PCI range sits). Read it from
+  `/proc/iomem` or the firmware's memory map; use `above:`.
+- *Otherwise, calibrate:* run a module with a known-bad chip on a known side
+  and note its `PADDR` line, then one with a known-bad chip on the other side.
+  A bit set in every error from one side and clear in every error from the
+  other is a rank-bit candidate: use `mask:` with it. Many controllers XOR several address bits into the rank,
+  in which case no single bit separates the sides, and the candidate mask is
+  the set of bits whose parity does; confirm any rule against both known sides
+  before trusting it. A handful of errors leaves many bits constant by chance,
+  so collect a few hundred.
+
+**Layout file (`-l`, needs `-r`).** One line per chip position,
+`rank lane designator`, `#` for comments. Designators come from the module's
+own drawing: this program assumes no raw card. An x16 part appears on both of
+its lanes. A (rank, lane) with no line prints `?`. See `layout.example`.
+
+A layout file names parts only as well as the rank rule places them, and a
+rule that is wrong for the bench will name the wrong side confidently. Check
+it with a module whose bad chip is known before relying on it.
+
 ## Exit status
 
 | Code | Meaning |
 |---|---|
 | 0 | Every thread ran and no error was observed. |
 | 1 | Errors were observed. The count is on the last stdout line. |
-| 2 | The test could not be completed, so the result is not a verdict. Either `/proc/self/pagemap` would not open, or a thread could not lock its memory; in the latter case an `INCOMPLETE:` line on stderr says how many. |
+| 2 | The test could not be completed, so the result is not a verdict. Either `/proc/self/pagemap` would not open, a `-r` or `-l` argument was invalid (nothing is tested), or a thread could not lock its memory; in the last case an `INCOMPLETE:` line on stderr says how many. |
 
 Code 2 exists so that a clean-looking run cannot be mistaken for a passing one.
 A thread whose `mmap` failed tested nothing, and `TOTAL ERRORS: 0` would

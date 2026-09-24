@@ -94,7 +94,11 @@ other:
 3. Compare **bit positions**, not addresses, between configurations. The map
    from physical address to a DRAM row and column depends on channel and rank
    interleaving, so changing which slots are populated changes the addresses
-   while the failing bit lane stays put.
+   while the failing bit lane stays put. The `LANE` summary is that comparison.
+4. To tell the two ranks apart, the address has to be decoded, which this
+   program does not do. The simplest bench setup is one module, single channel,
+   with rank interleaving turned off in firmware where it is offered: rank 0
+   then occupies the lower part of the module's range and rank 1 the upper.
 
 ## What each pass does
 
@@ -113,12 +117,26 @@ Per pass, for each of six patterns (`AA`, `55`, `FF`, `00`, `0F0F`, `CCCC`):
 
 ```
 threads=24 bytes/thread=1200MB passes=6 total=28GB
-ERR t=17 phase=minv-dn paddr=0x000c14794e78 exp=0xaaaaaaaaaaaaaaaa got=0xaaaaaabaaaaaaaaa xor=0x0000001000000000 nbits=1
+ERR t=17 phase=minv-dn paddr=0x000c14794e78 exp=0xaaaaaaaaaaaaaaaa got=0xaaaaaabaaaaaaaaa xor=0x0000001000000000 nbits=1 lane=4 dq=36
+LANE 4 (DQ32-39): 7 bit flips: DQ36=7
 TOTAL ERRORS: 7
 ```
 
 `phase` names which step caught it, `xor` isolates the flipped bits and `nbits`
 counts them. Only the first 300 error lines print; the total counts them all.
+
+`dq` names the flipped data lines and `lane` the byte lanes they sit in. Each
+64-bit word the test checks is one beat of the module's 64-bit data bus, so bit
+*n* of `xor` is DQ*n*, and DQ*n* belongs to byte lane *n*/8. The `LANE` lines,
+printed before the total, count flips per lane and per DQ over **every** error,
+including the ones past the 300-line print limit.
+
+A lane identifies a chip **position**, not yet a chip. On an x8 module each lane
+is one chip per rank, so on a dual-rank (2Rx8) module a lane narrows the fault
+to two chips: the one on the rank-0 side and the one on the rank-1 side. Which
+reference designators those are, and which side is rank 0, is set by the
+module's layout; x16 chips span two lanes each. On an ECC module the ninth
+(check-bit) lane never reaches this program.
 
 A single bit failing repeatedly at a fixed physical address, across patterns and
 phases, is the signature of a defective cell. Bursty multi-bit errors scattered

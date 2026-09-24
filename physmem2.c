@@ -40,6 +40,9 @@ static long total_err = 0;
 /* A thread that could not get its memory tested nothing. Counting that separately
  * is what keeps "no errors" from meaning "nothing ran" -- see the exit status below. */
 static long failed_threads = 0;
+/* Flips per data bit, over ALL errors (not just the 300 printed). One 64-bit word is one beat of
+ * the module's DQ bus, so bit i is DQ i and bit/8 is the byte lane -- one x8 chip per rank. */
+static long bit_err[64];
 
 static uint64_t v2p(void *v){
     uint64_t val; off_t off = ((uintptr_t)v / PS) * 8;
@@ -49,10 +52,16 @@ static uint64_t v2p(void *v){
 }
 static void report(int id, uint64_t *p, uint64_t got, uint64_t exp, const char *ph){
     uint64_t phys = v2p(p), x = got ^ exp;
+    char dq[64*3+1] = "", ln[8*2+1] = ""; int nd = 0, nl = 0;
+    for (int i = 0; i < 64; i++) if (x >> i & 1)
+      nd += snprintf(dq + nd, sizeof dq - nd, "%s%d", nd ? "," : "", i);
+    for (int l = 0; l < 8; l++) if (x >> (l*8) & 0xff)
+      nl += snprintf(ln + nl, sizeof ln - nl, "%s%d", nl ? "," : "", l);
     pthread_mutex_lock(&lk);
+    for (int i = 0; i < 64; i++) if (x >> i & 1) bit_err[i]++;
     if (++total_err <= 300)
-      printf("ERR t=%02d phase=%s paddr=0x%012lx exp=0x%016lx got=0x%016lx xor=0x%016lx nbits=%d\n",
-             id, ph, phys, exp, got, x, __builtin_popcountll(x));
+      printf("ERR t=%02d phase=%s paddr=0x%012lx exp=0x%016lx got=0x%016lx xor=0x%016lx nbits=%d lane=%s dq=%s\n",
+             id, ph, phys, exp, got, x, __builtin_popcountll(x), ln, dq);
     fflush(stdout);
     pthread_mutex_unlock(&lk);
 }
@@ -101,6 +110,14 @@ int main(int argc,char**argv){
     pthread_t *th=calloc(nt,sizeof(*th)); arg_t *ar=calloc(nt,sizeof(*ar));
     for(int i=0;i<nt;i++){ar[i]=(arg_t){i,mb*1024*1024,ps};pthread_create(&th[i],NULL,worker,&ar[i]);}
     for(int i=0;i<nt;i++) pthread_join(th[i],NULL);
+    /* Per-lane summary before the total, so TOTAL ERRORS stays the last stdout line. */
+    for(int l=0;l<8;l++){
+      long s=0; for(int i=l*8;i<l*8+8;i++) s+=bit_err[i];
+      if(!s) continue;
+      printf("LANE %d (DQ%d-%d): %ld bit flips:",l,l*8,l*8+7,s);
+      for(int i=l*8;i<l*8+8;i++) if(bit_err[i]) printf(" DQ%d=%ld",i,bit_err[i]);
+      printf("\n");
+    }
     printf("TOTAL ERRORS: %ld\n",total_err);
     fflush(stdout);
     if(failed_threads){

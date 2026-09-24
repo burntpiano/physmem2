@@ -2,7 +2,9 @@
 
 A small threaded memory tester for userspace. It writes patterns to locked
 anonymous pages, reads them back, and for every mismatch prints the **physical**
-address of the failing word alongside the expected and observed values.
+address of the failing word alongside the expected and observed values, the
+failing data lines and byte lane, and -- given a rank rule and a layout file --
+the rank and the chip.
 
 Written for a single diagnosis: intermittent single-bit corruption on a non-ECC
 desktop board, which a conventional single-threaded test reported as clean.
@@ -20,8 +22,8 @@ into a general-purpose suite.
   physical addresses, so it can miss faults that only appear under sustained
   multi-channel bandwidth.
 - **physmem2** is for the narrow case where you want, from a running system,
-  repeatable physical addresses for failing words under heavy multi-threaded
-  load, in a file short enough to read before trusting it.
+  repeatable physical addresses and failing lanes for failing words under heavy
+  multi-threaded load, in a file short enough to read before trusting it.
 
 It is deliberately short -- about 200 lines of C, a quarter of them comments --
 with no dependencies beyond glibc and pthreads.
@@ -181,17 +183,20 @@ those change.
 
 - *Easiest:* one module, one channel, rank interleaving turned off in firmware
   where it is offered. Rank 0 then fills the lower part of that module's range
-  and rank 1 the upper, and the boundary is where the second half starts (mind
-  the hole below 4 GB, where the PCI range sits). Read it from
-  `/proc/iomem` or the firmware's memory map; use `above:`.
+  and rank 1 the upper. The boundary is not listed anywhere: work it out from
+  the `System RAM` ranges in `/proc/iomem`, as the address where the module's
+  second half begins, counting capacity across the hole below 4 GB that the
+  PCI range occupies. Use it with `above:`.
 - *Otherwise, calibrate:* run a module with a known-bad chip on a known side
   and note its `PADDR` line, then one with a known-bad chip on the other side.
   A bit set in every error from one side and clear in every error from the
-  other is a rank-bit candidate: use `mask:` with it. Many controllers XOR several address bits into the rank,
-  in which case no single bit separates the sides, and the candidate mask is
-  the set of bits whose parity does; confirm any rule against both known sides
-  before trusting it. A handful of errors leaves many bits constant by chance,
-  so collect a few hundred.
+  other is a rank-bit candidate: use `mask:` with it. Many controllers XOR
+  several address bits into the rank, so often no single bit separates the
+  sides; then the mask is a set of bits whose parity is even for every error
+  from one side and odd for every error from the other, which takes the
+  platform's documentation or some trial to find. Either way, confirm the rule
+  against both known sides before trusting it, and collect a few hundred
+  errors: a handful leaves many bits constant by chance.
 
 **Layout file (`-l`, needs `-r`).** One line per chip position,
 `rank lane designator`, `#` for comments. Designators come from the module's
@@ -230,7 +235,8 @@ which always exited 0. The test itself is unchanged.
   and bank needs the memory controller's interleave configuration, which this
   program does not read. Repeated failures at a fixed address are strong
   evidence of a defect at that location; identifying which module requires
-  testing sticks in isolation.
+  testing sticks in isolation, and identifying the rank needs a rule supplied
+  with `-r` (see [Naming the chip](#naming-the-chip-rank-rules-and-layout-files)).
 
 ## Limitations
 
